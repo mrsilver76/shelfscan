@@ -19,6 +19,7 @@
 namespace ShelfScan
 {
     using System;
+    using System.Globalization;
     using System.IO;
     using System.Text.RegularExpressions;
 
@@ -70,6 +71,54 @@ namespace ShelfScan
             // 3. Verify episode filename
             if (!VerifyEpisodeFilename(filePath, isDateBasedShow))
                 allGood = false;
+
+            // 3b. Verify if the tags in square brackets aren't supposed to be in curly braces
+            if (!PlexCommonVerifier.ValidateSquareBracketTags(filePath))
+                allGood = false;
+
+            // 4. Verify that season number in the folder matches the season number in the filename (for season-based shows)
+            if (!isDateBasedShow)
+            {
+                var match = Regex.Match(Path.GetFileNameWithoutExtension(filePath), @"[sS](\d{1,4})[eE](\d{1,4})");
+                if (match.Success)
+                {
+                    int seasonFromFile = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+
+                    // Special folder check
+                    if (seasonFolder.Equals("Specials", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (seasonFromFile != 0)
+                        {
+                            Console.WriteLine($"\n{filePath}\n  Mismatched season number. Folder is 'Specials', but filename says 'S{seasonFromFile:D2}'.");
+                            allGood = false;
+                        }
+                    }
+                    else
+                    {
+                        var folderMatch = Regex.Match(seasonFolder, @"Season (\d+)", RegexOptions.IgnoreCase);
+                        if (folderMatch.Success)
+                        {
+                            int seasonFromFolder = int.Parse(folderMatch.Groups[1].Value, CultureInfo.InvariantCulture);
+
+                            if (seasonFromFile == 0)
+                            {
+                                // Allow zero-season folders
+                                if (!(seasonFolder.Equals("Season 0", StringComparison.OrdinalIgnoreCase) ||
+                                      seasonFolder.Equals("Season 00", StringComparison.OrdinalIgnoreCase)))
+                                {
+                                    Console.WriteLine($"\n{filePath}\n  Filename has S00, but folder '{seasonFolder}' is not a valid zero-season folder.");
+                                    allGood = false;
+                                }
+                            }
+                            else if (seasonFromFile != seasonFromFolder)
+                            {
+                                Console.WriteLine($"\n{filePath}\n  Mismatched season number. Folder says '{seasonFolder}', but filename says 'S{seasonFromFile:D2}'.");
+                                allGood = false;
+                            }
+                        }
+                    }
+                }
+            }
 
             return allGood;
         }

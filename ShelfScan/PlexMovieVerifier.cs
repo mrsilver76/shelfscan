@@ -16,7 +16,6 @@
  * along with this Options.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace ShelfScan
@@ -43,7 +42,6 @@ namespace ShelfScan
         /// <param name="filePath"></param>
         /// <returns></returns>
         /// 
-
         public static bool VerifyMovies(string filePath, string rootFolder)
         {
             string fileName = Path.GetFileName(filePath);
@@ -61,25 +59,51 @@ namespace ShelfScan
                 if (fileName.EndsWith(extra + Path.GetExtension(filePath), StringComparison.OrdinalIgnoreCase))
                     return true;
 
-            // 3. Validate { } blocks
-            var braceMatches = Regex.Matches(fileName, @"\{.*?\}");
-            foreach (Match match in braceMatches)
+            string fileNameNoExt = Path.GetFileNameWithoutExtension(fileName);
+
+            // 3. Validate { } blocks (ignore {edition-*} in filename, enforce others only if not in root)
+            bool inRoot = string.Equals(Path.GetFullPath(folderPath).TrimEnd('\\'),
+                                        Path.GetFullPath(rootFolder).TrimEnd('\\'),
+                                        StringComparison.OrdinalIgnoreCase);
+
+            // Tests for when not in root folder
+            if (!inRoot)
             {
-                string content = match.Value;
-                if (!content.StartsWith("{edition-", StringComparison.OrdinalIgnoreCase) &&
-                    !content.StartsWith("{imdb-", StringComparison.OrdinalIgnoreCase) &&
-                    !content.StartsWith("{tmdb-", StringComparison.OrdinalIgnoreCase))
+                var fileBraceMatches = Regex.Matches(fileNameNoExt, @"\{.*?\}");
+                foreach (Match match in fileBraceMatches)
                 {
-                    Console.WriteLine($"\n{filePath}\n  Invalid block '{content}'. Must be edition-, imdb-, or tmdb-");
-                    return false;
+                    string content = match.Value;
+                    if (content.StartsWith("{edition-", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (!parentFolder.Contains(content, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine($"\n{filePath}\n  Block '{content}' in filename must also exist in folder");
+                        return false;
+                    }
+                }
+
+                var folderBraceMatches = Regex.Matches(parentFolder, @"\{.*?\}");
+                foreach (Match match in folderBraceMatches)
+                {
+                    string content = match.Value;
+                    if (content.StartsWith("{edition-", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (!fileNameNoExt.Contains(content, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine($"\n{filePath}\n  Block '{content}' in folder must also exist in filename");
+                        return false;
+                    }
                 }
             }
 
             // 4. Strip { } and [ ] for core validation only
-            string coreName = Regex.Replace(Path.GetFileNameWithoutExtension(fileName), @"(\{.*?\}|\[.*?\])", "").Trim();
+            string coreName = Regex.Replace(fileNameNoExt, @"(\{.*?\}|\[.*?\])", "").Trim();
 
-            // 5. Validate core name: title, year, optional split (only valid CD/disc/part)
-            string corePattern = @"^(?<title>.+) \((?<year>\d{4})\)\s*( - (?<split>cd\d+|disc\d+|disk\d+|dvd\d+|part\d+|pt\d+))?$";
+            // Step 5: core name validation
+            // Capture title, year, and anything after the year
+            string corePattern = @"^(?<title>.+?) ?\((?<year>\d{4})\)(?<after>.*)$";
             Regex coreRegex = new(corePattern, RegexOptions.IgnoreCase);
             var coreMatch = coreRegex.Match(coreName);
 
@@ -89,8 +113,42 @@ namespace ShelfScan
                 return false;
             }
 
-            string title = coreMatch.Groups["title"].Value.Trim();
-            string yearStr = coreMatch.Groups["year"].Value;
+            string titlePart = coreMatch.Groups["title"].Value.Trim();
+            string yearStr = coreMatch.Groups["year"].Value.Trim();
+            string afterYear = coreMatch.Groups["after"].Value.Trim();
+
+            // Step 5a: More specific diagnostics for title/year
+            if (string.IsNullOrEmpty(titlePart))
+            {
+                Console.WriteLine($"\n{filePath}\n  Missing or malformed title before year.");
+                return false;
+            }
+            else if (!Regex.IsMatch(yearStr, @"^\d{4}$"))
+            {
+                Console.WriteLine($"\n{filePath}\n  Year must be 4 digits. Found '{yearStr}'.");
+                return false;
+            }
+
+            // Step 5b: validate split / additional text
+            if (!string.IsNullOrEmpty(afterYear))
+            {
+                if (!afterYear.StartsWith("-", StringComparison.CurrentCulture))
+                {
+                    // Extra text without dash
+                    Console.WriteLine($"\n{filePath}\n  Additional text after year is technically invalid: '{afterYear}'");
+                    return false;
+                }
+                else
+                {
+                    // Dash exists, must match split/part pattern
+                    string splitPattern = @"^- (cd\d+|disc\d+|disk\d+|dvd\d+|part\d+|pt\d+)$";
+                    if (!Regex.IsMatch(afterYear, splitPattern, RegexOptions.IgnoreCase))
+                    {
+                        Console.WriteLine($"\n{filePath}\n  Split/part tag format incorrect. Expected ' - pt1', ' - CD2', etc.");
+                        return false;
+                    }
+                }
+            }
 
             // 6. Validate year
             if (!int.TryParse(yearStr, out int year) || year < 1900 || year > DateTime.Now.Year + 1)
@@ -100,21 +158,27 @@ namespace ShelfScan
             }
 
             // 7. Validate folder consistency if not in root
-            if (!string.Equals(Path.GetFullPath(folderPath).TrimEnd('\\'),
-                               Path.GetFullPath(rootFolder).TrimEnd('\\'),
-                               StringComparison.OrdinalIgnoreCase))
+            if (!inRoot)
             {
-                // Remove optional split from filename for folder comparison
-                string fileBaseName = Regex.Replace(Path.GetFileNameWithoutExtension(fileName),
-                                                    @" - (cd\d+|disc\d+|disk\d+|dvd\d+|part\d+|pt\d+)$",
-                                                    "", RegexOptions.IgnoreCase);
+                // Remove [ ] and {edition-*} from both folder and filename for core comparison
+                string coreFolderName = Regex.Replace(parentFolder, @"(\[.*?\]|\{edition-.*?\})", "", RegexOptions.IgnoreCase).Trim();
+                string fileCoreForFolder = Regex.Replace(fileNameNoExt, @"(\[.*?\]|\{edition-.*?\})", "", RegexOptions.IgnoreCase).Trim();
 
-                if (!fileBaseName.Equals(parentFolder, StringComparison.OrdinalIgnoreCase))
+                // Remove optional split from filename
+                fileCoreForFolder = Regex.Replace(fileCoreForFolder,
+                                  @" - (cd\d+|disc\d+|disk\d+|dvd\d+|part\d+|pt\d+)$",
+                                  "", RegexOptions.IgnoreCase).Trim();
+
+                if (!fileCoreForFolder.Equals(coreFolderName, StringComparison.OrdinalIgnoreCase))
                 {
-                    Console.WriteLine($"\n{filePath}\n  Folder name '{parentFolder}' does not match filename '{fileBaseName}'");
+                    Console.WriteLine($"\n{filePath}\n  Folder name '{parentFolder}' does not match the filename base (ignoring optional split, {{edition-*}}, and [tags]).");
                     return false;
                 }
             }
+
+            // 8. Verify if the tags in square brackets aren't supposed to be in curly braces
+            if (!PlexCommonVerifier.ValidateSquareBracketTags(filePath))
+                return false;
 
             return true;
         }
