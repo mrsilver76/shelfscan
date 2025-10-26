@@ -5,7 +5,7 @@ _A cross-platform command-line tool (Windows, Linux, macOS) for scanning a media
 
 ShelfScan scans a folder (either locally or on a network) and generates a detailed report indicating how compliant the files are with Plex's naming conventions. It identifies issues with file names, folder structures, and multi-episode formatting for both movies and TV shows. Support for music is not yet implemented.
 
-ShelfScan does not modify or rename any files. It's purpose is solely inspection and reporting of file/folder naming issues.
+**ShelfScan does not modify or rename any files.** It's purpose is solely inspection and reporting of file/folder naming issues.
 
 >[!CAUTION]
 >- **This is a very early beta release.** There may be mistakes in the filename validation.
@@ -43,16 +43,26 @@ Each release includes the following files (`x.x.x` denotes the version number):
 > [!TIP]
 > There is no installer for native platforms. Just download the appropriate file and run it from the command line. If you're using Docker (e.g. on Synology), setup will differ - see notes below.
 
-### Linux/macOS users
+### macOS users
 
 - Download the appropriate binary for your platform (see table above).
-- Install the [.NET 8.0 runtime](https://learn.microsoft.com/en-gb/dotnet/core/install/linux?WT.mc_id=dotnet-35129-website).
+- Install the [.NET 8.0 runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0/runtime). Slightly more technical information can be found [here](https://learn.microsoft.com/en-gb/dotnet/core/install/macos).
+- ⚠️ Do not install the SDK, ASP.NET Core Runtime, or Desktop Runtime.
+- Make the downloaded file executable: `chmod +x ShelfScan-x.x.x-<your-platform>`
+- If you get `zsh: killed` when running the executable then:
+  - Apply an ad-hoc code signature: `codesign --force --deep --sign - ShelfScan-x.x.x-<your-platform>`
+  - Remove the quarantine attribute: `xattr -d com.apple.quarantine ShelfScan-x.x.x-<your-platform>`
+
+### Linux users
+
+- Download the appropriate binary for your platform (see table above).
+- Install the [.NET 8.0 runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0/runtime). Slightly more technical pages can be found [here](https://learn.microsoft.com/en-gb/dotnet/core/install/linux).
 - ⚠️ Do not install the SDK, ASP.NET Core Runtime, or Desktop Runtime.
 - Make the downloaded file executable: `chmod +x ShelfScan-x.x.x-<your-platform>`
 
 ### Docker users
 
-- Install the [.NET 8.0 runtime](https://learn.microsoft.com/en-gb/dotnet/core/install/linux?WT.mc_id=dotnet-35129-website) inside the container or use a [.NET container image](https://learn.microsoft.com/en-gb/dotnet/core/docker/introduction#net-images).
+- Install the [.NET 8.0 Linux runtime](https://learn.microsoft.com/en-gb/dotnet/core/install/linux) inside the container or use a [.NET container image](https://learn.microsoft.com/en-gb/dotnet/core/docker/introduction#net-images).
 - ⚠️ Do not install the SDK, ASP.NET Core Runtime, or Desktop Runtime.
 - Use the `ShelfScan-x.x.x-linux-x64` binary inside the container.
 - Mount your media folders into the container with appropriate read access.
@@ -71,22 +81,29 @@ Each release includes the following files (`x.x.x` denotes the version number):
 ShelfScan is a command-line tool. Run it from a terminal or command prompt, supplying all options and arguments directly on the command line.
 
 ```
-ShelfScan <folder> [movie|tv]
+ShelfScan <folder> [options]
 ```
 
-If you wish to save the output to a file then append `> [filename]` - for example:
+If you wish to save the output to a file then append `> [filename]` to the command line.
 
-```
-Shelfscan d:\movies > report.txt
-```
-
-Command line arguments:
+### Mandatory arguments:
 
 - **`<folder>`**   
   Mandatory. Specifies the folder containing media content. Make sure that you provide the same top-level directory as you have configured in Plex.
 
-- **`[movie|tv]`**   
-  Optional. By default, ShelfScan will attempt to automatically detect the content type. If it gets it wrong then you can override this by supplying either `movie` or `tv`.
+### Optional arguments:
+
+- **`-t <type>`**, **`--type <type>`**  
+  Use to manually set the content type to `movie` or `tv`. ShelfScan will attempt automatic detection unless overridden.
+
+- **`-p`**, **`--pass`**  
+  Show files that pass verification. By default these are hidden.
+
+- **`-s`**, **`--selftest`**  
+  Performs a self test. When used, `<folder>` must be the path to a directory containing `pass` and `fail` sub-folders, each with `movies` and `tv` sub-folders inside. All content within those folders will be verified and a report generated. Test files are provided in the `test` subfolder of this repository. It is recommended to use 0-byte files for test content.
+
+- **`/?`**, **`-h`**, **`--help`**  
+  Show the command line options.
 
 ## 🛟 Questions/problems?
 
@@ -110,6 +127,16 @@ The Plex website provides good documentation to help your organise and name your
 -  [Naming and organizing your TV show files](https://support.plex.tv/articles/naming-and-organizing-your-tv-show-files/).
 
 ## 🕰️ Version history
+
+### 0.6.0 (26 October 2025)
+- Fixed issue where ignored tags at the end of a filename were incorrectly causing parent folder validation to fail.
+- Fixed issue where mismatched season numbers between folders and files were not being flagged.
+- Added more detailed error messages for invalid movie filenames.
+- Added warning when `[...]` is incorrectly used for `imdb`, `tmdb`, `tvdb`, and `edition` tags.
+- Changed command line options to be more scalable, now use `-t` (`--type`) to force library type.
+- Added `-p` (`--pass`) option to display files that pass verification.
+- Added `-s` (`--selftest`) option to run automated tests on dummy content (test files available in repo)
+- Updated test data.
 
 ### 0.5.0 (02 October 2025)
 - Rewrote movie verification to improve brace handling, allow `{}` tags in any order, and parse filenames with optional split parts (`ptX` etc).
