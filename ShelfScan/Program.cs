@@ -17,69 +17,50 @@
 */
 
 using System.Globalization;
+using System.Reflection;
 using System.Text.RegularExpressions;
 
 namespace ShelfScan
 {
     internal sealed class Program
     {
+        /// <summary>Folder to scan for content</summary>
+        public static string FolderToScan { get; set; } = "";
+
+        /// <summary>If set to true then files that pass testing will be shown</summary>
+        public static bool ShowPasses { get; set; }
+
+        /// <summary>If set to true, then perform self-test mode (for development only)</summary>
+        public static bool SelfTest { get; set; }
+
+        /// <summary>Type of media being scanned: "movie" or "tv"</summary>
+        public static string MediaType { get; set; } = "";
+
         /// <summary>Version of this application.</summary>
-        public static string AppVersion { get; } = "0.5.0";
+        public static Version AppVersion { get; } = Assembly.GetExecutingAssembly().GetName().Version!;
 
         static void Main(string[] args)
         {
-            // Check valid number of arguments
-
-            if (args.Length < 1)
-                DisplayUsage("Folder argument is required.");
-
-            if (args.Length > 2)
-                DisplayUsage("Too many arguments.");
-
-            string folder = args[0];
-            string? mediaType = args.Length > 1 ? args[1].ToLower(CultureInfo.CurrentCulture) : null;
-
-            if (folder == "--help" || folder == "-h" || folder == "/?")
-                DisplayUsage();
-
-            if (!Directory.Exists(folder))
-                DisplayUsage($"Folder '{folder}' does not exist.");
-
-            // Work out the media type if not specified
-
-            if (!string.IsNullOrEmpty(mediaType))
-            {
-                string key = mediaType.ToLower(CultureInfo.CurrentCulture).Trim();
-                if (key.Length > 2) key = key[..2];  // Normalize to first 2 letters
-                switch (key)
-                {
-                    case "mo":  // movie(s)
-                    case "fi":  // film(s)
-                        mediaType = "movie";
-                        break;
-                    case "tv":  // tv
-                    case "sh":  // show(s)
-                    case "te":  // television
-                        mediaType = "tv";
-                        break;
-                    default:    // unknown
-                        DisplayUsage($"Unknown media type override '{mediaType}'. Use 'movie' or 'tv'.");
-                        break;  // Not required, but keeps analyzer happy
-                }
-            }
+            // Parse command line arguments
+            CommandLineParser.ParseArguments(args);
 
             // Show the header with GPL notice
             ShowHeader(true);
 
-            // Get all .mkv, .mp4 and .avi files recursively. In the future we'll add music.
+            if (SelfTest)
+            {
+                SelfTestRunner.RunSelfTests();
+                Environment.Exit(0);
+            }
 
+            // Get all .mkv, .mp4 and .avi files recursively. In the future we may add music.
             Console.WriteLine();
-            Console.WriteLine($"Searching for content in {folder}...");
+            Console.WriteLine($"Searching for content in {FolderToScan}...");
 
             List<string> files = [];
             try
             {
-                AddMediaFiles(folder, files, [".mkv", ".mp4", ".avi"]);
+                AddMediaFiles(FolderToScan, files, [".mkv", ".mp4", ".avi"]);
             }
             catch (Exception ex)
             {
@@ -88,25 +69,24 @@ namespace ShelfScan
             }
 
             // If no override type defined, then try to auto-detect based on folder structure
-            if (string.IsNullOrEmpty(mediaType))
-                mediaType = GuessMediaType(files);
+            if (string.IsNullOrEmpty(MediaType))
+                MediaType = GuessMediaType(files);
 
             // Now process each file
-
             int total = files.Count;
             int validCount = 0;
             int invalidCount = 0;
             bool isValid;
 
             Console.WriteLine();
-            Console.WriteLine($"---------- BEGIN {mediaType.ToUpper(CultureInfo.CurrentCulture)} REPORT ----------");
+            Console.WriteLine($"========= BEGIN {MediaType.ToUpper(CultureInfo.CurrentCulture)} REPORT =========");
 
             // Show some disclaimer text
 
             Console.WriteLine();
             Console.WriteLine("Beta notice:");
             Console.WriteLine();
-            Console.WriteLine($"This tool is an early beta (v{AppVersion}). There may be mistakes in the logic.");
+            Console.WriteLine($"This tool is an early beta (v{AppVersion.Major}.{AppVersion.Minor}.{AppVersion.Revision}). There may be mistakes in the logic.");
             Console.WriteLine("If you encounter any issues or incorrect results, please report them on GitHub.");
             Console.WriteLine();
             Console.WriteLine("Strict file format checking:");
@@ -121,26 +101,33 @@ namespace ShelfScan
             Console.WriteLine();
             Console.WriteLine("Scan results:");
 
+            // Loop through each file and verify
             foreach (var file in files)
             {
-                if (mediaType == "movie")
-                    isValid = PlexMovieVerifier.VerifyMovies(file, folder);
+                if (MediaType == "movie")
+                    isValid = PlexMovieVerifier.VerifyMovies(file, FolderToScan);
                 else
                     isValid = PlexShowVerifier.VerifyShow(file);
 
                 // Tally results
                 if (isValid)
+                {
                     validCount++;
+                    if (ShowPasses)
+                        Console.WriteLine($"\n{file}\n  PASSED verification.");
+                }
                 else
                     invalidCount++;
             }
 
+            // Show summary
             Console.WriteLine();
             Console.WriteLine($"Summary:");
             Console.WriteLine();
             Console.WriteLine($"Valid files:          {validCount,6:N0}");
             Console.WriteLine($"Invalid files:        {invalidCount,6:N0}");
             Console.WriteLine($"Total files checked:  {total,6:N0}");
+
             float pc = (float)(validCount * 100.0) / (float)total;
             string niceMessage = pc switch
             {
@@ -153,7 +140,7 @@ namespace ShelfScan
             Console.WriteLine($"Correctness:          {pc,6:N2}% {niceMessage}");
 
             Console.WriteLine();
-            Console.WriteLine($"---------- END {mediaType.ToUpper(CultureInfo.CurrentCulture)} REPORT ----------");
+            Console.WriteLine($"========== END {MediaType.ToUpper(CultureInfo.CurrentCulture)} REPORT ==========");
             Environment.Exit(0);
         }
 
@@ -181,9 +168,9 @@ namespace ShelfScan
         /// Display the application header. If showGPL is true, also show the GPL license notice.
         /// </summary>
         /// <param name="showGPL"></param>
-        private static void ShowHeader(bool showGPL = false)
+        public static void ShowHeader(bool showGPL = false)
         {
-            Console.WriteLine($"ShelfScan v{AppVersion} - Scans a media library for Plex naming compliance.");
+            Console.WriteLine($"ShelfScan v{AppVersion.Major}.{AppVersion.Minor}.{AppVersion.Revision} - Scans a media library for Plex naming compliance.");
             if (showGPL)
             {
                 Console.WriteLine("http://github.com/mrsilver76/shelfscan/");
@@ -194,32 +181,6 @@ namespace ShelfScan
                 Console.WriteLine("at your option) any later version.");
             }
         }
-        /// <summary>
-        /// Display usage information and exit. If an error message is provided, show that too
-        /// and exit with error code -1.
-        /// </summary>
-        /// <param name="errorMessage"></param>
-        private static void DisplayUsage(string errorMessage = "")
-        {
-            Console.WriteLine("Usage: ShelfScan <folder> [movie|tv]");
-            if (errorMessage == "")
-                ShowHeader(true);
-            else
-                ShowHeader();
-            Console.WriteLine();
-            Console.WriteLine("Arguments:");
-            Console.WriteLine("  <folder>      Folder of content to scan");
-            Console.WriteLine("  [movie|tv]    (Optional) Override auto-detection to content type.");
-
-            if (!string.IsNullOrEmpty(errorMessage))
-            {
-                Console.WriteLine();
-                Console.WriteLine($"Error: {errorMessage}");
-                Environment.Exit(-1);
-            }
-
-            Environment.Exit(0);
-        }
 
         /// <summary>
         /// Add all media files in the specified folder and its subfolders to the list. Ignores
@@ -228,7 +189,7 @@ namespace ShelfScan
         /// <param name="folder">Root folder</param>
         /// <param name="files">List to add files to</param>
         /// <param name="extensions">Extensions to include</param>
-        private static void AddMediaFiles(string folder, List<string> files, IEnumerable<string> extensions)
+        public static void AddMediaFiles(string folder, List<string> files, IEnumerable<string> extensions)
         {
             foreach (var dir in Directory.EnumerateDirectories(folder))
             {
